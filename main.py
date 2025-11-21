@@ -1,18 +1,27 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import json, base64
+import json
+import base64
 from io import BytesIO
 from openpyxl import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
+from typing import cast
 from datetime import datetime
+from fastapi.responses import RedirectResponse
 
 app = FastAPI(
     title="QIESI Toolkit API",
     version="1.0.0",
-    description="JSON → Excel converter for NAC demos"
+    description="API services for QIESI Toolkit including JSON → Excel conversion."
 )
 
 class ConvertRequest(BaseModel):
     jsonInput: str
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health", tags=["System"])
@@ -20,56 +29,73 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/info", tags=["System"])
+def info():
+    return {
+        "name": "QIESI Toolkit API",
+        "version": "1.0.0",
+        "author": "Paul Keys",
+        "routes": {
+            "root": "/",
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+            "convert": "/convert",
+            "health": "/health"
+        }
+    }
+
+
 @app.post("/convert", tags=["Conversion"])
 def convert(req: ConvertRequest):
     try:
         data = json.loads(req.jsonInput)
     except:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        raise HTTPException(status_code=400, detail="Invalid JSON. Provide valid JSON in jsonInput.")
 
-    # Normalize into list
     if isinstance(data, dict):
         data = [data]
+
     if not isinstance(data, list):
-        raise HTTPException(status_code=400, detail="JSON must be list or object")
+        raise HTTPException(status_code=400, detail="JSON must be an object or an array of objects.")
 
-    # Flatten nested dicts
-    flat_data = []
     for item in data:
-        row = {}
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail="Each array item must be a JSON object.")
 
-        for key, value in item.items():
-            if isinstance(value, dict):
-                # flatten nested dict
-                for sub_key, sub_value in value.items():
-                    row[f"{key}_{sub_key}"] = sub_value
-            else:
-                row[key] = value
+    headers = []
+    for row in data:
+        for key in row.keys():
+            if key not in headers:
+                headers.append(key)
 
-        flat_data.append(row)
-
-    # Build Excel
     try:
         wb = Workbook()
-        ws = wb.active
-
-        headers = set()
-        for row in flat_data:
-            headers.update(row.keys())
-        headers = list(headers)
+        ws = cast(Worksheet, wb.active)
+        ws.title = "Data"
 
         ws.append(headers)
-        for row in flat_data:
-            ws.append([row.get(h) for h in headers])
+
+        for row in data:
+            excel_row = []
+            for h in headers:
+                value = row.get(h)
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value)
+                excel_row.append(value)
+            ws.append(excel_row)
 
         bio = BytesIO()
         wb.save(bio)
+
         excel_b64 = base64.b64encode(bio.getvalue()).decode()
 
-        ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        filename = f"QIESI-{ts}.xlsx"
-
-        return {"fileName": filename, "excelFile": excel_b64}
-
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Excel generation failed: {str(e)}")
+
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    filename = f"QIESI-{ts}.xlsx"
+
+    return {
+        "fileName": filename,
+        "excelFile": excel_b64
+    }
