@@ -1,56 +1,60 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import json, base64
-from io import BytesIO
-from openpyxl import Workbook
-from datetime import datetime
-
-app = FastAPI(
-    title="QIESI Toolkit API",
-    version="1.0.0",
-    description="Core API for QIESI automation tools. Includes JSON→Excel conversion and future QIESI features."
-)
-
-class ConvertRequest(BaseModel):
-    jsonInput: str
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-@app.post("/convert")
+@app.post("/convert", tags=["Conversion"])
 def convert(req: ConvertRequest):
     try:
         data = json.loads(req.jsonInput)
     except:
         raise HTTPException(status_code=400, detail="Invalid JSON format")
 
+    # 🔵 NEW: Auto-detect nested array case
+    # e.g. { "transactions": [ {...}, {...} ] }
+    if isinstance(data, dict) and len(data) == 1:
+        only_value = list(data.values())[0]
+        if isinstance(only_value, list):
+            data = only_value
+
+    # 🔵 If still a dict, convert to single-row list
     if isinstance(data, dict):
         data = [data]
 
     if not isinstance(data, list):
-        raise HTTPException(status_code=400, detail="JSON must be object or list")
+        raise HTTPException(status_code=400, detail="JSON must be object, list, or object-with-array")
 
-    wb = Workbook()
-    ws = wb.active
-
-    headers = set()
+    # 🔵 Validate every item is a dict
     for item in data:
         if not isinstance(item, dict):
-            raise HTTPException(status_code=400, detail="Each item must be a JSON object")
-        headers.update(item.keys())
+            raise HTTPException(status_code=400, detail="Each item in the list must be a JSON object")
 
-    headers = list(headers)
-    ws.append(headers)
+    # Build Excel
+    try:
+        wb = Workbook()
+        ws = wb.active
 
-    for item in data:
-        ws.append([item.get(h) for h in headers])
+        # Collect all unique headers
+        headers = set()
+        for item in data:
+            headers.update(item.keys())
 
-    buff = BytesIO()
-    wb.save(buff)
-    encoded = base64.b64encode(buff.getvalue()).decode()
+        headers = list(headers)
+        ws.append(headers)
 
-    return {
-        "fileName": f"QIESI-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.xlsx",
-        "excelFile": encoded
-    }
+        # Append rows
+        for item in data:
+            row = [
+                item.get(h) if not isinstance(item.get(h), (list, dict)) else json.dumps(item.get(h))
+                for h in headers
+            ]
+            ws.append(row)
+
+        # Encode to Base64
+        buff = BytesIO()
+        wb.save(buff)
+        encoded = base64.b64encode(buff.getvalue()).decode()
+
+        ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        return {
+            "fileName": f"QIESI-{ts}.xlsx",
+            "excelFile": encoded
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Excel generation error: {str(e)}")
