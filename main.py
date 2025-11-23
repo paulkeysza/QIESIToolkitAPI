@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Union, Any
 import json
 import base64
 from io import BytesIO
@@ -8,72 +9,122 @@ from datetime import datetime
 
 app = FastAPI(
     title="QIESI JSON → Excel API",
-    version="1.2.2",
-    description="Accepts raw JSON text or JSON object/array and converts it to Excel + returns Nintex File Object + rows."
+    version="1.2.3",  # bugfix: correctly handle {'value': {'transactions': [...]}}
+    description="Convert JSON to Excel (Base64) + return rows for NAC."
 )
 
+
 class ConvertRequest(BaseModel):
-    jsonInput: object  # Allow any type: string, dict, list
+    # Can be JSON string, object, or array (NAC may send any of these)
+    jsonInput: Union[str, dict, list]
 
-@app.post("/convert", tags=["Conversion"])
-def convert(req: ConvertRequest):
 
-    raw = req.jsonInput
+def normalise_to_rows(raw: Any) -> list[dict]:
+    """
+    Normalise incoming jsonInput into a list of row dicts.
+    For this requirement we primarily support:
+      { "value": { "transactions": [ {..}, {..}, ... ] } }
 
-    # STEP 1 — Normalize into dict or list
-    # -----------------------------------
-    # Case A: Already an object or list
-    if isinstance(raw, (dict, list)):
-        data = raw
+    Also handles:
+      - { "transactions": [ ... ] }
+      - [ {..}, {..} ]
+      - { single: "object" } -> [ { single: "object" } ]
+    """
 
-    # Case B: Comes in as a string → parse it safely
-    elif isinstance(raw, str):
+    # If a string, first parse as JSON
+    if isinstance(raw, str):
         try:
             data = json.loads(raw)
         except Exception as ex:
-            raise HTTPException(400, f"Invalid JSON string: {str(ex)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"jsonInput is not valid JSON string: {str(ex)}"
+            )
     else:
-        raise HTTPException(400, "jsonInput must be JSON text, object, or array")
+        data = raw
 
-    # STEP 2 — Ensure final structure is a list
-    # ----------------------------------------
+    # Now data is dict or list (hopefully)
+    # 1) Preferred structure: {"value": {"transactions": [ ... ]}}
     if isinstance(data, dict):
-        rows = [data]
+        if (
+            "value" in data
+            and isinstance(data["value"], dict)
+            and "transactions" in data["value"]
+        ):
+            tx = data["value"]["transactions"]
+            if not isinstance(tx, list):
+                raise HTTPException(
+                    status_code=400,
+                    detail="value.transactions must be an array of objects."
+                )
+            rows = tx
+
+        # 2) Slight variant: {"transactions": [ ... ]}
+        elif "transactions" in data and isinstance(data["transactions"], list):
+            rows = data["transactions"]
+
+        # 3) Single object -> one row
+        else:
+            rows = [data]
+
     elif isinstance(data, list):
+        # Already a list of row objects
         rows = data
     else:
-        raise HTTPException(400, "Parsed JSON must be an object or array")
+        raise HTTPException(
+            status_code=400,
+            detail="jsonInput must be a JSON object, array, or JSON string."
+        )
 
-    # STEP 3 — Build Excel headers
-    # ----------------------------
-    headers = set()
+    # Validate rows are objects
+    for idx, r in enumerate(rows):
+        if not isinstance(r, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Each row/transaction must be an object; item at index {idx} is {type(r).__name__}."
+            )
+
+    return rows
+
+
+@app.post("/convert", tags=["Conversion"])
+def convert(req: ConvertRequest):
+    # 1) Normalise to rows based on your structure
+    rows = normalise_to_rows(req.jsonInput)
+
+    # 2) Collect headers (all keys across all rows)
+    headers_set = set()
     for item in rows:
-        if not isinstance(item, dict):
-            raise HTTPException(400, "Array items must be JSON objects")
-        headers.update(item.keys())
-    headers = list(headers)
+        headers_set.update(item.keys())
 
-    # STEP 4 — Create Excel file
-    # --------------------------
+    # Stable header order (sorted) so Excel is deterministic
+    headers = sorted(headers_set)
+
+    # 3) Create Excel
     try:
         wb = Workbook()
         ws = wb.active
         ws.title = "Data"
 
+        # Header row
         ws.append(headers)
 
+        # Data rows
         for item in rows:
             ws.append([item.get(h) for h in headers])
 
+        # Save to memory and Base64 encode
         bio = BytesIO()
         wb.save(bio)
-        excel_b64 = base64.b64encode(bio.getvalue()).decode()
+        excel_b64 = base64.b64encode(bio.getvalue()).decode("utf-8")
 
     except Exception as ex:
-        raise HTTPException(500, f"Excel generation failed: {str(ex)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Excel generation failed: {str(ex)}"
+        )
 
-    # STEP 5 — Return Nintex File Object + rows
-    # -----------------------------------------
+    # 4) Filename with UTC timestamp
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
     return {
@@ -81,6 +132,7 @@ def convert(req: ConvertRequest):
         "excelFile": excel_b64,
         "rows": rows
     }
+
 
 @app.get("/health")
 def health():
