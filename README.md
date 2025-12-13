@@ -1,6 +1,6 @@
-# 📘 KeysieAPI — JSON → Excel Converter API
+# 📘 QIESIToolkitAPI — JSON → Excel Converter API
 
-KeysieAPI is a lightweight **FastAPI** microservice that dynamically converts JSON input into an Excel file returned as Base64.  
+QIESIToolkitAPI is a lightweight **FastAPI** microservice that dynamically converts JSON input into an Excel file returned as Base64.  
 It is purpose‑built for workflow engines like **Nintex Automation Cloud (NAC)** and integrates easily into automation solutions.
 
 ---
@@ -24,7 +24,7 @@ It is purpose‑built for workflow engines like **Nintex Automation Cloud (NAC)*
 # 📂 Project Structure
 
 ```
-KeysieAPI/
+QIESIToolkitAPI/
   src/
     __init__.py
     main.py
@@ -44,8 +44,8 @@ KeysieAPI/
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/paulkeysza/KeysieAPI.git
-cd KeysieAPI
+git clone https://github.com/paulkeysza/QIESIToolkitAPI.git
+cd QIESIToolkitAPI
 ```
 
 ### 2. Create and activate virtual environment
@@ -97,7 +97,7 @@ Converts JSON (string) into a Base64 Excel file.
 #### Response:
 ```json
 {
-  "fileName": "KeysieAPI-20250101123000.xlsx",
+  "fileName": "QIESIToolkitAPI-20250101123000.xlsx",
   "excelFile": "<BASE64_STRING>"
 }
 ```
@@ -142,7 +142,7 @@ uvicorn src.main:app --host 0.0.0.0 --port $PORT
 ### Setup steps:
 1. Create **New Web Service**  
 2. Connect GitHub  
-3. Select `KeysieAPI`  
+3. Select `QIESIToolkitAPI`  
 4. Runtime: **Python**  
 5. Auto Deploy: **Yes**  
 6. Deploy  
@@ -157,7 +157,7 @@ https://<your-service>.onrender.com
 
 # 🤖 Nintex Xtension Integration
 
-KeysieAPI is optimized for NAC:
+QIESIToolkitAPI is optimized for NAC:
 
 ### Input
 | Field       | Type   | Description |
@@ -186,7 +186,7 @@ I can generate a **ready‑to‑import Xtension JSON** on request.
 Client / Workflow (Nintex, Postman, Custom App)
            |
            v
-      KeysieAPI (FastAPI)
+      QIESIToolkitAPI (FastAPI)
            |
     JSON parsing, validation
            |
@@ -206,7 +206,7 @@ Client / Workflow (Nintex, Postman, Custom App)
 Client
   │  POST /convert
   ▼
-KeysieAPI
+QIESIToolkitAPI
   │  Validate JSON
   │  Normalize list of dicts
   │  Create Excel workbook
